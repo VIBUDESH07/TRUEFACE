@@ -1,9 +1,10 @@
 import React, { useState, useRef, useEffect } from "react";
 import Webcam from "react-webcam";
-import axios from "axios";
+import { io } from "socket.io-client";
 
 const WebcamCapture = () => {
   const webcamRef = useRef(null);
+  const socketRef = useRef(null);
   const [result, setResult] = useState("Waiting for result...");
   const [borderColor, setBorderColor] = useState("gray");
   const [isCameraAllowed, setIsCameraAllowed] = useState(false);
@@ -23,11 +24,17 @@ const WebcamCapture = () => {
   ];
 
   const updateBorderColor = (message) => {
+    // Guard against undefined/null messages
+    if (!message || typeof message !== "string") {
+      setBorderColor("gray");
+      return;
+    }
+
     if (message.includes("FAKE")) {
       setBorderColor("red");
     } else if (message.includes("REAL but NOT MATCHED")) {
       setBorderColor("blue");
-    } else if (message.includes("REAL") && message.includes("MATCHED")) {
+    } else if (message.includes("REAL")) {
       setBorderColor("#01b93b");
     } else {
       setBorderColor("gray");
@@ -35,20 +42,13 @@ const WebcamCapture = () => {
   };
 
   const sendImageToBackend = (imageSrc) => {
-    axios
-      .post("http://localhost:5000/api/process-image", {
-        image: imageSrc,
-      })
-      .then((response) => {
-        const message = response.data.message;
-        setResult(message);
-        updateBorderColor(message);
-      })
-      .catch((error) => {
-        console.error("Error sending image to backend:", error);
-        setResult("Error processing image.");
-        setBorderColor("gray");
-      });
+    if (!socketRef.current || !socketRef.current.connected) {
+      console.warn('Socket not connected');
+      setResult('No connection to server');
+      return;
+    }
+
+    socketRef.current.emit('image', { image: imageSrc });
   };
 
   const captureFrame = () => {
@@ -59,6 +59,27 @@ const WebcamCapture = () => {
   };
 
   useEffect(() => {
+    // create socket connection on mount
+    socketRef.current = io('http://localhost:5000');
+
+    socketRef.current.on('connect', () => {
+      console.info('Connected to server via websocket');
+    });
+
+    socketRef.current.on('prediction', (data) => {
+      if (!data) return;
+      if (data.error) {
+        setResult(`Error: ${data.error}`);
+        setBorderColor('gray');
+        return;
+      }
+      // Show only the label (REAL / FAKE / FOCUS) — do not display score
+      const label = data.label || 'FOCUS';
+      const message = label;
+      setResult(message);
+      updateBorderColor(message);
+    });
+
     const id = setInterval(() => {
       if (isCameraAllowed) {
         captureFrame();
@@ -66,7 +87,12 @@ const WebcamCapture = () => {
     }, 600);
     setIntervalId(id);
 
-    return () => clearInterval(id);
+    return () => {
+      clearInterval(id);
+      if (socketRef.current) {
+        socketRef.current.disconnect();
+      }
+    };
   }, [isCameraAllowed]);
 
   const checkCameraAndAllow = async () => {
