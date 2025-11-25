@@ -60,7 +60,7 @@ const WebcamCapture = () => {
 
   useEffect(() => {
     // create socket connection on mount
-    socketRef.current = io('http://localhost:5000');
+    socketRef.current = io('http://ec2-16-171-193-102.eu-north-1.compute.amazonaws.com:5000');
 
     socketRef.current.on('connect', () => {
       console.info('Connected to server via websocket');
